@@ -7,6 +7,8 @@
 #include <iterator>
 #include <cstdlib>
 #include <ctime>
+#include <list>
+#include <algorithm>
 
 using namespace std;
 
@@ -54,6 +56,7 @@ private:
 	int cache_size;
 	int currentLoad;
 	int nBlocks;
+	char replacementPolicy;
 	
 	int nSets;			// número de conjuntos
 	int block_size;		// tamanho do bloco
@@ -67,15 +70,17 @@ private:
 	int totalHits;
 
 	vector<block> blocks;
+	vector<list<int>> queue;
 
 public:
 	/*
 		Inicializa parâmetros da cache, reserva número de blocos da cache, cria blocos e os insere no vetor de blocos.
 	*/
-	cache(int nSets = 1024, int block_size = 4, int associativity = 1) {
+	cache(int nSets = 1024, int block_size = 4, int associativity = 1, char replacementPolicy = 'r') {
 		this->nSets = nSets;
 		this->block_size = block_size;
 		this->associativity = associativity;
+		this->replacementPolicy = replacementPolicy;
 	
 		this->cache_size =  nSets * block_size * associativity;
 		this->nBlocks = nSets * associativity;
@@ -95,6 +100,16 @@ public:
 		for(int i = 0; i < nBlocks; i++) {
 			emptyBlock = new block();
 			this->blocks.push_back(*emptyBlock);
+		}
+		//cout << "äte aqui nao deu segfault";
+		//this->queue.reserve(nSets);
+		
+
+		if(this->replacementPolicy != 'r') {
+			for(int i = 0; i < this->nSets; i++) {
+				list<int> emptyList;
+				this->queue.push_back(emptyList);
+			}
 		}
 	}
 
@@ -119,19 +134,48 @@ public:
 	}
 
 	/*
-		Recebe endereço e carga do conjunto em questão.
-		Procura um espaço livre no conjunto e insere se possível.
-		Se estiver cheia, substitui aleatoriamente.
+		Gera índice aleatório dentro do conjunto especificado.
 	*/
-	void insertAddress(int address, int setLoad) {
+	int randomReplacement(int set) {
 		srand(time(NULL));
 
+		return set *this->associativity + (rand() % this->associativity);
+	}
+
+	/*
+		Gerencia a fila de substituição em políticas LRU e FIFO.
+	*/
+	int queueReplacement(int set) {
+		int replaceTag = this->queue[set].front();
+		this->queue[set].pop_front();
+
+		for(int index = set * this->associativity; index < (set * this->associativity + this->associativity); index++) {
+			if(this->blocks[index].getTag() == replaceTag) {
+				return index;
+			}
+		}
+	}
+
+	/*
+		Recebe endereço e carga do conjunto em questão.
+		Procura um espaço livre no conjunto e insere se possível.
+		Se estiver cheia, substitui de acordo com a política.
+	*/
+	void insertAddress(int address, int setLoad) {
+	
 		int set = (address / this->block_size) % this->nSets;
 		int tag = address / this->block_size / this->nSets;
-
+	
 		if(setLoad == this->associativity) {
-			int index = set *this->associativity + (rand() % this->associativity);
-
+			int index;
+			if(this->replacementPolicy == 'r') {
+				index = randomReplacement(set);	
+			}
+			else {
+				index = queueReplacement(set);
+				this->queue[set].push_back(tag);	
+			}
+			
 			this->blocks[index].setTag(tag);
 			this->blocks[index].setData(1);
 			this->conflictMiss++;
@@ -147,6 +191,20 @@ public:
 				this->currentLoad++;
 				this->compulsoryMiss++;
 				//cout << "   Compulsory Miss at " << set << endl;
+				if(this->replacementPolicy == 'f') {
+					if(!(find(this->queue[set].begin(), this->queue[set].end(), tag) != this->queue[set].end())) {
+						this->queue[set].push_back(tag);
+					}
+				}
+				if(this->replacementPolicy == 'l') {
+					if(!(find(this->queue[set].begin(), this->queue[set].end(), tag) != this->queue[set].end())) {
+						this->queue[set].push_back(tag);
+					}
+					else {
+						this->queue[set].remove(tag);
+						this->queue[set].push_back(tag);
+					}
+				}
 				return;
 			}
 		}
@@ -263,7 +321,7 @@ int main(int argc, char* argv[]) {
 	if(argc == 3) {
 		addressVector = loadFile(argv[2]);
 		vector<string> params = processParams(argv[1]);
-		myLittleCache = new cache(stoi(params[0]), stoi(params[1]), stoi(params[2]));
+		myLittleCache = new cache(stoi(params[0]), stoi(params[1]), stoi(params[2]), params[3][0]);
 	}
 	else if(argc == 2) {
 		addressVector = loadFile(argv[1]);
