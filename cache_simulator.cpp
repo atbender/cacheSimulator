@@ -48,19 +48,18 @@ public:
 	}
 };
 
-// a cache  é endereçada a bytes e o endereço possui 32 bits
+
 class cache {
 private:
 	int cache_size;
 	int currentLoad;
 	int nBlocks;
-	int totalAccesses;
-
+	
 	int nSets;			// número de conjuntos
 	int block_size;		// tamanho do bloco
 	int associativity;	// número de blocos por conjunto
 	
-
+	int totalAccesses;
 	int totalMisses;
 	int compulsoryMiss;
 	int capacityMiss;
@@ -68,9 +67,11 @@ private:
 	int totalHits;
 
 	vector<block> blocks;
-	//char replacement_policy; 
 
 public:
+	/*
+		Inicializa parâmetros da cache, reserva número de blocos da cache, cria blocos e os insere no vetor de blocos.
+	*/
 	cache(int nSets = 1024, int block_size = 4, int associativity = 1) {
 		this->nSets = nSets;
 		this->block_size = block_size;
@@ -92,14 +93,9 @@ public:
 
 		block* emptyBlock;
 		for(int i = 0; i < nBlocks; i++) {
-			//cout << i << endl;
 			emptyBlock = new block();
 			this->blocks.push_back(*emptyBlock);
 		}
-		//for(int i = 0; i<nBlocks;i++){
-		//	cout << blocks[i].getTag()<< endl;
-		//}
-		//cout << blocks.size() << endl;
 	}
 
 	~cache() {
@@ -118,12 +114,217 @@ public:
 		return blocks[index];
 	}
 
-	//temp
 	vector<block> getBlocks() {
 		return this->blocks;
 	}
 
-	void insertTA(int address) {
+	/*
+		Recebe endereço e carga do conjunto em questão.
+		Procura um espaço livre no conjunto e insere se possível.
+		Se estiver cheia, substitui aleatoriamente.
+	*/
+	void insertAddress(int address, int setLoad) {
+		srand(time(NULL));
+
+		int set = (address / this->block_size) % this->nSets;
+		int tag = address / this->block_size / this->nSets;
+
+		if(setLoad == this->associativity) {
+			int index = set *this->associativity + (rand() % this->associativity);
+
+			this->blocks[index].setTag(tag);
+			this->blocks[index].setData(1);
+			this->conflictMiss++;
+			//cout << "   Conflict Miss at " << set << endl;
+			return;
+		}
+		
+		for(int index = set * this->associativity; index < (set * this->associativity + this->associativity); index++) {
+			if(!(this->blocks[index].getValid())) {
+				this->blocks[index].setValid(true);
+				this->blocks[index].setTag(tag);
+				this->blocks[index].setData(1);
+				this->currentLoad++;
+				this->compulsoryMiss++;
+				//cout << "   Compulsory Miss at " << set << endl;
+				return;
+			}
+		}
+	}
+
+	/*
+		Recebe um endereço e o procura na cache.
+		É uma funcão genérica para mapeamento associativo por conjunto.
+		Se a cache utilizar política de mapeamento direto, irá procurar apenas em um bloco da cache.
+		Senão irá procurar em todos os blocos do conjunto.
+		Em caso de totalmente associativa, esse conjunto é toda a cache.
+
+		Se achar o endereço, incrementa hits.
+		Caso contrário, incrementa misses e chama função de inserir endereço na cache.
+	*/
+	void accessAddress(int address) {
+		int set = (address / this->block_size) % this->nSets;//(address %  this->nSets) * associativity;
+		int tag = address / this->block_size / this->nSets;
+		int setLoad = 0;
+
+		for(int index = set * this->associativity; index < (set * this->associativity + this->associativity); index++) {
+			if(this->blocks[index].getValid()) {
+				setLoad++;
+				if(tag == this->blocks[index].getTag()) {
+					this->totalHits++;
+					//cout << "   Hit at set " << set << endl;
+					return;
+				}
+			}
+		}
+		if(this->currentLoad == this->nBlocks) {
+			//cout << "   Capacity Miss at set " << set << endl;
+			this->capacityMiss++;
+		}
+		this->totalMisses++;
+
+		insertAddress(address, setLoad);
+	}
+
+	/*
+		Tenta acessar cada um dos elementos do vector de endereços
+	*/
+	void testCache(vector<int> addressesTests) {
+		this->totalAccesses = addressesTests.size();
+
+		for(int i = 0; i < addressesTests.size(); i++) {
+			accessAddress(addressesTests[i]);
+		}
+	}
+	
+	/*
+		Imprime resultados da simulação.
+	*/
+	void displayLog() {
+		cout << "================Simulation Log================" << endl;
+		cout << "Total Accesses: " << this->totalAccesses << endl;
+		cout << "Hits: " << this->totalHits << endl;
+		cout << "Misses: " << this->totalMisses << endl;
+		cout << "     Compulsory Misses: " << this->compulsoryMiss << endl;
+		cout << "     Conflict Misses: " << this->conflictMiss << endl;
+		cout << "     Capacity Misses: " << this->capacityMiss << endl;
+		cout << "Miss Rate: " << (float)totalMisses / totalAccesses << endl;
+		cout << "Hit Rate: " << (float)totalHits / totalAccesses << endl;
+		cout << "===============================================" << endl;
+	}
+};
+
+
+
+/*
+	Recebe nome do arquivo e retorna vector inteiro de endereços.
+*/
+vector<int> loadFile(char* fileName) {
+	fstream bin_in(fileName, ios_base::binary|ios_base::in);
+	bin_in.unsetf(ios::skipws);
+
+	vector<int> addressVector;
+    
+    int address;
+    while(bin_in.read( reinterpret_cast<char*>(&address), sizeof(int))) {
+        addressVector.push_back(address);
+    }
+
+	return addressVector;
+}
+
+/*
+	Recebe recebe parâmetros de argv em uma string e separa utilizando delimitador :, retorna vector das substrings.	
+*/
+vector<string> processParams(char* inputString) {
+	string s = inputString;
+	string delimiter = ":";
+
+	size_t pos = 0;
+	string token;
+	vector<string> params;
+	while ((pos = s.find(delimiter)) != string::npos) {
+		token = s.substr(0, pos);
+		params.push_back(token);
+		s.erase(0, pos + delimiter.length());
+	}
+	params.push_back(s);
+	return params;
+}
+
+/*
+	Carrega parâmetros, arquivo de entrada, simula cache e imprime resultados.
+*/
+int main(int argc, char* argv[]) {
+	
+	vector<int> addressVector;
+	cache* myLittleCache;
+
+	if(argc == 3) {
+		addressVector = loadFile(argv[2]);
+		vector<string> params = processParams(argv[1]);
+		myLittleCache = new cache(stoi(params[0]), stoi(params[1]), stoi(params[2]));
+	}
+	else if(argc == 2) {
+		addressVector = loadFile(argv[1]);
+		myLittleCache = new cache();
+	}
+	else {
+		cout << "Invalid input." << endl;
+		return 0;
+	}
+	
+	myLittleCache->testCache(addressVector);
+	myLittleCache->displayLog();
+
+	return 0;
+}
+
+
+
+/*
+	// used in direct mapped caches (obsolete)
+	void accessAddressDP(int address) {
+		int index = address % this->nBlocks;
+		int tag = address / block_size / nBlocks;
+
+		if(this->blocks[index].getValid()) {
+			// valid
+			if(tag == this->blocks[index].getTag()) {
+				// hit
+				this->totalHits++;
+				
+			}
+			else {
+				// miss
+				if(this->currentLoad == this->nBlocks) {
+					// capacity miss
+					this->capacityMiss++;
+				else {
+					this->currentLoad++;
+				}
+				// all misses are conflict misses
+				this->totalMisses++;
+				this->conflictMiss++;
+				this->blocks[index].setTag(tag);
+				this->blocks[index].setData(1);
+			}
+		}
+		else {
+			// not valid, compulsory miss
+			this->blocks[index].setValid(true);
+			this->blocks[index].setTag(tag);
+			this->blocks[index].setData(1);
+
+			this->totalMisses++;
+			this->compulsoryMiss++;
+			this->currentLoad++;
+		}
+
+	}
+
+/*
+	void insertFA(int address) {
 		srand(time(NULL));
 
 		int tag = address;
@@ -150,9 +351,7 @@ public:
 	}
 
 	// used in totalmente associativa caches
-	void accessBlockTA(int address) {
-		
-
+	void accessBlockFA(int address) {
 		int tag = address;
 
 		//bool flag = false;
@@ -179,139 +378,6 @@ public:
 		}
 		// all misses are capacity misses (probably)
 		this->totalMisses++;
-		insertTA(address);
+		insertFA(address);
 	}
-
-	// used in direct mapped caches
-	void accessBlockDP(int address) {
-		int index = address % this->nBlocks;
-		int tag = address / block_size / nBlocks;
-
-		if(this->blocks[index].getValid()) {
-			// valid
-			if(tag == this->blocks[index].getTag()) {
-				// hit
-				this->totalHits++;
-			}
-			else {
-				// miss
-				if(this->currentLoad == this->nBlocks) {
-					// capacity miss
-					this->capacityMiss++;
-				}
-				else {
-					this->currentLoad++;
-				}
-				// all misses are conflict misses
-				this->totalMisses++;
-				this->conflictMiss++;
-				this->blocks[index].setTag(tag);
-				this->blocks[index].setData(1);
-			}
-		}
-		else {
-			// not valid, compulsory miss
-			this->blocks[index].setValid(true);
-			this->blocks[index].setTag(tag);
-			this->blocks[index].setData(1);
-
-			this->totalMisses++;
-			this->compulsoryMiss++;
-			this->currentLoad++;
-		}
-
-	}
-
-	void testCache(vector<int> addressesTests) {
-		this->totalAccesses = addressesTests.size();
-		if(this->associativity == 1) {
-			// cache is direct mapped
-			for(int i = 0; i < addressesTests.size(); i++) {
-				//cout << i << endl;
-				accessBlockDP(addressesTests[i]);
-			}
-		}
-		else if(nSets == 1) {
-			// cache is totalmente associativa
-			for(int i = 0; i < addressesTests.size(); i++) {
-				//cout << i << endl;
-				accessBlockTA(addressesTests[i]);
-			}
-		}
-		else {
-			// cache is associativa por conjunto
-
-		}
-	}
-	
-	void displayLog() {
-		cout << "===============================================" << endl;
-		cout << "Total Misses: " << this->totalMisses << endl;
-		cout << "Compulsory Misses: " << this->compulsoryMiss << endl;
-		cout << "Conflict Misses: " << this->conflictMiss << endl;
-		cout << "Capacity Misses: " << this->capacityMiss << endl;
-		cout << "Hits: " << this->totalHits << endl;
-		cout << "Miss Rate: " << (float)totalMisses / totalAccesses << endl;
-		cout << "Hit Rate: " << (float)totalHits / totalAccesses << endl;
-		cout << "===============================================" << endl;
-	}
-};
-
-
-
-
-
-vector<int> loadFile(char* fileName) {
-	fstream bin_in(fileName, ios_base::binary|ios_base::in);
-	bin_in.unsetf(ios::skipws);
-
-	// get file size (if needed)
-	//streampos fileSize;
-    //bin_in.seekg(0, ios::end);
-    //fileSize = bin_in.tellg();
-    //bin_in.seekg(0, ios::beg);
-    //vec.reserve(fileSize);
-
-	vector<int> vec;
-    
-    int address;
-    while(bin_in.read( reinterpret_cast<char*>(&address), sizeof(int))) {
-        vec.push_back(address);
-    }
-
-    
-
-	return vec;
-}
-
-
-
-
-int main(int argc, char* argv[]) {
-	//cout << argv[1] << " " << argv[2] << " " << argv[3] << " " << argv[4] << endl;
-	vector<int> vec;
-	cache* myLittleCache;
-
-	if(argc == 5) {
-		vec = loadFile(argv[4]);
-		myLittleCache = new cache(stoi(argv[1]), stoi(argv[2]), stoi(argv[3]));
-	}
-	else if(argc == 2) {
-		myLittleCache = new cache();
-		vec = loadFile(argv[1]);
-	}
-	else {
-		cout << "Invalid input." << endl;
-		return 0;
-	}
-	
-	
-
-	
-	
-	myLittleCache->testCache(vec);
-	myLittleCache->displayLog();
-
-
-	return 0;
-}
+	*/
